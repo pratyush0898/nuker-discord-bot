@@ -7,10 +7,16 @@
   "scripts": {
     "start": "node index.js"
   },
-  "keywords": ["Discord Bot", "Nuker", "Educational Purpose", "Destroys Guilds"],
+  "keywords": [
+    "Discord Bot",
+    "Nuker",
+    "Educational Purpose",
+    "Destroys Guilds"
+  ],
   "author": "Pratyush kumar",
   "license": "MIT",
   "dependencies": {
+    "@inquirer/prompts": "^8.3.2",
     "discord.js": "^14.25.1",
     "dotenv": "^17.3.1"
   }
