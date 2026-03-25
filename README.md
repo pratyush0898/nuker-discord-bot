@@ -64,6 +64,18 @@ After the bot logs in, it will display a prompt in the terminal:
 
 ---
 
+## 💰 Pricing (Offer)
+
+This project also supports monetized services (as discussed):
+
+- $10 per nuke execution (one-time nuke process)
+- $20  for background burst for a month
+- $50 per month for full Antinuke + Nuke whitelist protection
+
+> These are service-level options. The code is unchanged (no enforcement in the bot), they are part of the support/service pricing model.
+
+---
+
 ## ⚠️ Important Notes
 
 - This bot is extremely aggressive and can be disruptive. Only run it in servers you own or explicitly have permission to interact with in this way.
